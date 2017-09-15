@@ -1,0 +1,41 @@
+@import url('https://fonts.googleapis.com/css?family=Cousine');
+
+* {
+    margin: 0;
+    padding: 0;
+}
+
+html {
+    height: 100%;
+    line-height: 1.2;
+    font-family: 'Cousine', monospace;
+    font-size: 18px;
+    -webkit-text-size-adjust: 100%;
+}
+
+h1 {
+    font-size: 250%;
+    padding-top: 3em;
+    margin-bottom: 1em;
+}
+
+h2 {
+    font-size: 150%;
+    margin-bottom: 2em;
+}
+
+h1,h2 {
+    page-break-before: always;
+}
+
+p {
+    margin: 1.5em 0;
+}
+
+ul {
+    margin-top: -.5em;
+    list-style: disc;
+    margin-left: 1em;
+    padding-left: 1.5em;
+    text-indent: .5em;
+}
