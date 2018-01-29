@@ -3,7 +3,7 @@ concrete.py
 
 Procedurally generated concrete poetry.
 
-Copyright 2017 Nathan Mifsud <nathan@nmifsud.com>
+Copyright 2018 Nathan Mifsud <nathan@mifsud.org>
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -30,31 +30,47 @@ from googleapiclient.discovery import build
 from PIL import Image
 from pycorpora import animals
 
-# check for command line argument
+# Ask for the desired number of poems if not specified with an input argument.
 if len(sys.argv) != 2:
     num_poems = int(input('\nHow many poems? '))
 else:
     num_poems = int(sys.argv[1])
 
-# select random words from corpus in https://github.com/dariusk/corpora
-subjects = random.sample(animals.common['animals'], num_poems)
+# Create a random list of animal species from an existing corpus.
+# See: https://github.com/aparrish/pycorpora
+species = random.sample(animals.common['animals'], num_poems)
 
-poems, passed = [], []
+# Define parameters to enable a custom Google search. This requires a personal
+# JSON/Atom Custom Search API key.
+# See: https://developers.google.com/custom-search/json-api/v1/overview
 service = build('customsearch', 'v1',
-    developerKey='key') # requires JSON/Atom Custom Search API key
-    
+                developerKey='key')
+
+# This loop iterates through the species names, rearranges the letters so that
+# the 'darkness' of each letter can be mapped to image pixel intensities, grabs
+# relevant image URLs, and then parses an image per species into text.
+poems, passed = [], []
 for p in range(num_poems):
-    # prep character set for later use
-    sSubject = subjects[p].replace(' ', '') # for multi-word animals
-    alphabet = 'czrsivtlxfeajonuykpwhqbdmg' # sort according to 'density'
-    wSubject = sorted(list(sSubject),
-        key=lambda word: [alphabet.index(c) for c in word])
-    set = np.asarray(list('  '+''.join(wSubject)))
-    
-    # query Google for image URLs
+    # Prepare a character set for later use by removing first stripping spaces
+    # that appear in some species names (e.g. grizzly bear).
+    stripped = species[p].replace(' ', '')
+    # Sort the constituent letters according to a predefined weight order (from
+    # the least to the most dense characters).
+    alphabet = 'czrsivtlxfeajonuykpwhqbdmg'
+    weighted = sorted(list(stripped),
+                      key=lambda word: [alphabet.index(c) for c in word])
+    # Prepend blank spaces to the final character set. These will later replace
+    # the lightest image pixels, sometimes producing a better animal silhouette.
+    set = np.asarray(list('  ' + ''.join(weighted)))
+
+    # Query Google for image URLs. This requires a Custom Search Engine ID (see
+    # https://cse.google.com) in the 'cx' parameter. I append 'transparent' to
+    # the search query to increase the likelihood of grabbing images that will
+    # produce recognisable final output, given that when rendered as text,
+    # complex backgrounds can be hard to separate from the animals themselves.
     r = service.cse().list(
-        q=(subjects[p]+' transparent'), # for recognisable final output
-        cx='cx', # Custom Search Engine ID, see https://cse.google.com
+        q=(species[p] + ' transparent'),
+        cx='cx',
         searchType='image',
         num=10,
         imgSize='medium'
@@ -62,48 +78,69 @@ for p in range(num_poems):
     images = []
     for item in r['items']:
         images.append(item['link'])
-    random.shuffle(images) # reduce predictability of results
-    
+    # Shuffle the resulting list of image URLs to reduce the predictability of
+    # the results in the event that this program is run multiple times.
+    random.shuffle(images)
+
+    # This subloop attempts to convert the image pixels into text for as many
+    # iterations as it takes for the number of successfully converted ('passed')
+    # images to match the desired number of poems. Sometimes exceptions occur
+    # because the image data is not as required (e.g. certain file formats
+    # don't work), which is why the program pulled 10 URLs for each search
+    # query in the previous step. An exception handler allows it to continue
+    # down the list of URLs until one works.
     attempt = 0
-    while len(passed) < p+1:
+    while len(passed) < p + 1:
         try:
-            # put image data into variable
+            # Put the image data into a variable.
             r = requests.get(images[attempt])
             r.content
             i = Image.open(io.BytesIO(r.content))
-            
-            # set final output size skewed to compensate for narrow letters
-            maxSide, skew = 40, 7/4
-            ratio = min(maxSide/i.size[0], maxSide/i.size[1])
-            newSize = (round(i.size[0]*skew*ratio),round(i.size[1]*ratio))
-            
-            # code adapted from https://gist.github.com/cdiener/10567484
-            i = np.sum(np.asarray(i.resize(newSize)),axis=2) # sum RGB pixels
-            i -= i.min() # scale intensity values
-            i = (1.0 - i/i.max())*(set.size-1) # map values to character set
+
+            # Set the dimensions of the output poem using the aspect ratio of
+            # the original image, skewed in width to correct for the fact that
+            # letters are narrow rather than pixel-square.
+            maxSide, skew = 40, 7 / 4
+            ratio = min(maxSide / i.size[0], maxSide / i.size[1])
+            newSize = (round(i.size[0] * skew * ratio),
+                       round(i.size[1] * ratio))
+
+            # The following 4 lines of code were adapted from Christian Diener.
+            # See: https://gist.github.com/cdiener/10567484
+            # First, sum the RGB values of each pixel in the resized image.
+            i = np.sum(np.asarray(i.resize(newSize)), axis=2)
+            # Then scale the resulting overall intensity values to zero.
+            i -= i.min()
+            # Map each value of the image matrix to the character set.
+            i = (1.0 - i / i.max()) * (set.size - 1)
+            # Create a continuous letter string, with each row (r) of pixels
+            # separated by line breaks (<br>), and append to the list of poems.
             poems.append('<br>'.join((''.join(r) for r in set[i.astype(int)])))
+
+            # Keep track of the successful attempts.
             passed.append(images[attempt])
-            print('\nRendered '+subjects[p])
-            
-        except Exception as e: # note failed attempts and try again
-            attempt = attempt+1
-            print('\nError\t'+images[p]+'\n\t', end='')
+            print('\nRendered ' + species[p])
+
+        except Exception as e:  # Note failed attempts and try again.
+            attempt += 1
+            print('\nError\t' + images[p] + '\n\t', end='')
             print(e)
 
-# assemble HTML and output as PDF file
-file = 'concrete-'+time.strftime('%y%m%d-%H%M%S')+'.pdf'
+# Assemble the HTML and produce a PDF file, formatted by an external CSS file.
+# See: https://wkhtmltopdf.org/
+file = 'concrete-' + time.strftime('%y%m%d-%H%M%S') + '.pdf'
 css = 'concrete.css'
 options = {'margin-top': '1in', 'margin-bottom': '1in',
-    'margin-left': '1in', 'margin-right': '1in',
-    'encoding': 'utf-8', 'no-outline': None, 'quiet': None}
+           'margin-left': '1in', 'margin-right': '1in',
+           'encoding': 'utf-8', 'no-outline': None, 'quiet': None}
 text = ('<h1>concrete animals</h1><p>https://github.com/nmifsud/concrete</p>'
-    +'<p>generated on '+time.strftime('%d %b %Y at %#H:%M:%S')+'</p>'
-    +'<br><p>featured in this edition:</p><ul>')
+        + '<p>generated on ' + time.strftime('%d %b %Y at %#H:%M:%S') + '</p>'
+        + '<br><p>featured in this edition:</p><ul>')
 for p in range(num_poems):
-    text = text+'<li>'+subjects[p]+'</li>'
-text = text+'</ul>'
+    text += '<li>' + species[p] + '</li>'
+text += '</ul>'
 for p in range(num_poems):
-    text = text+('<h2>'+subjects[p]+'</h2><p>'+poems[p]+'</p>')
-text = text.replace(' ', '&nbsp;') # preserve whitespace
+    text += '<h2>' + species[p] + '</h2><p>' + poems[p] + '</p>'
+text = text.replace(' ', '&nbsp;')  # Necessary to preserve whitespace.
 pdfkit.from_string(text, file, css=css, options=options)
-print('\nGenerated '+file)
+print('\nGenerated ' + file)
